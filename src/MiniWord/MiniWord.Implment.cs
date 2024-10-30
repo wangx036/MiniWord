@@ -1,4 +1,6 @@
-﻿namespace MiniSoftware
+﻿using System.Reflection;
+
+namespace MiniSoftware
 {
     using DocumentFormat.OpenXml;
     using DocumentFormat.OpenXml.Packaging;
@@ -69,6 +71,8 @@
             ReplaceText(xmlElement, docx, tags);
         }
 
+        
+
         /// <summary>
         /// 渲染Table
         /// </summary>
@@ -107,7 +111,60 @@
 
                     if(tagObj == null) continue;
 
-                    if (tagObj is IEnumerable)
+                    // 横向渲染的集合
+                    if (tagObj is TransverseList<object> transverseList && transverseList.Any())
+                    {
+                        // 获取obj的所有key值
+                        var keyList = new Dictionary<string,PropertyInfo>();
+                        var item = transverseList[0];
+                       
+                        // 只支持List<obj>，不支持dictionary。 支持Obj.A.B.C...
+                        var props = item.GetType().GetProperties();
+                        foreach (var p in props)
+                        {
+                            var dicKey = $"{listLevelKeys[0]}.{p.Name}";
+                            keyList.Add("{{" + dicKey + "}}", p);
+                        }
+
+                        var cells = tr.Elements<TableCell>().ToList();
+                        var cellStartIndex = 0;
+                        var thisKey = string.Empty;
+                        // 单元格内容“{{obj.P1}} XX”
+                        var cellKeyInnerXml = string.Empty;
+                        for (int i = 0; i < cells.Count(); i++)
+                        {
+                            var cell = cells[i];
+                            foreach (var kv in keyList)
+                            {
+                                if (cell.InnerText.Contains(kv.Key))
+                                {
+                                    cellStartIndex = i;
+                                    thisKey = kv.Key;
+                                    cellKeyInnerXml = cell.InnerXml;
+                                    break;
+                                }
+                            }
+                            if (cellStartIndex > 0)
+                                break;
+                        }
+
+                        var fillCellCount = Math.Min(cells.Count - cellStartIndex, transverseList.Count);
+                        for (int i = 0; i < fillCellCount; i++)
+                        {
+                            var cell = cells[i + cellStartIndex];
+                            // 除了“{{obj.Prop}}”和“”需要填充，其他不填充 
+                            if (!cell.InnerText.Contains(thisKey) && !string.IsNullOrWhiteSpace(cell.InnerText))
+                                return;
+
+                            var propVal = keyList[thisKey].GetValue(transverseList[i]);
+                            // todo 暂不支持图片、超链接等
+                            var propValStr = propVal is DateTime ? ((DateTime)propVal).ToString("yyyy-MM-dd HH:mm:ss") : propVal?.ToString();
+                            cell.InnerXml = cellKeyInnerXml.Replace(thisKey, propValStr);
+                        }
+                        
+                    }
+                    // 纵向（普通）渲染的集合
+                    else if (tagObj is IEnumerable)
                     {
                         var attributeKey = matchs[0].Split('.')[0];
                         var list = tagObj as IEnumerable;
@@ -179,7 +236,7 @@
                 }
             }
         }
-
+         
 
         /// <summary>
         /// 获取Obj对象指定的值
@@ -451,6 +508,7 @@
 
             return value;
         }
+         
 
         /// <summary>
         /// 替换单个paragraph属性值

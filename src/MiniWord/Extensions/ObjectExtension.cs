@@ -27,7 +27,11 @@ namespace MiniSoftware.Extensions
 				{
 					object val1 = prop.GetValue(value);
 
-					if (IsStrongTypeEnumerable(val1))
+                    if (val1 is TransverseList<object> transverseList)
+                    {
+                        reuslt.Add(prop.Name,val1);
+                    }
+					else if (IsStrongTypeEnumerable(val1))
 					{
 						var isValueOrStringType = false;
 						List<Dictionary<string, object>> sx = new List<Dictionary<string, object>>();
