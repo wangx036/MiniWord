@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Diagnostics;
+using System.Reflection;
 
 namespace MiniSoftware
 {
@@ -129,8 +130,8 @@ namespace MiniSoftware
                         var cells = tr.Elements<TableCell>().ToList();
                         var cellStartIndex = 0;
                         var thisKey = string.Empty;
-                        // 单元格内容“{{obj.P1}} XX”
-                        var cellKeyInnerXml = string.Empty;
+                        // 单元格元素（不包括tcpr，这里面有宽度信息，不改动，否则可能错位）
+                        var cellKeyEles = new List<OpenXmlElement>();
                         for (int i = 0; i < cells.Count(); i++)
                         {
                             var cell = cells[i];
@@ -140,7 +141,7 @@ namespace MiniSoftware
                                 {
                                     cellStartIndex = i;
                                     thisKey = kv.Key;
-                                    cellKeyInnerXml = cell.InnerXml;
+                                    cellKeyEles.AddRange(cell.ChildElements.Where(e=>!(e is TableCellProperties)).Select(e=>e.CloneNode(true)));
                                     break;
                                 }
                             }
@@ -159,7 +160,14 @@ namespace MiniSoftware
                             var propVal = keyList[thisKey].GetValue(transverseList[i]);
                             // todo 暂不支持图片、超链接等
                             var propValStr = propVal is DateTime ? ((DateTime)propVal).ToString("yyyy-MM-dd HH:mm:ss") : propVal?.ToString();
-                            cell.InnerXml = cellKeyInnerXml.Replace(thisKey, propValStr);
+
+                            var newEles = new List<OpenXmlElement>();
+                            newEles.AddRange(cellKeyEles.Select(e => e.CloneNode(true)));
+                            newEles.ForEach(e=> e.InnerXml = e.InnerXml.Replace(thisKey, propValStr));
+
+                            RemoveAllChildrenExceptTcPr(cell);
+                            cell.Append(newEles);
+
                         }
                         
                     }
@@ -236,7 +244,20 @@ namespace MiniSoftware
                 }
             }
         }
-         
+
+        /// <summary>
+        /// 移除Cell除了Prop之外的所有元素
+        /// </summary>
+        /// <param name="cell"></param>
+        private static void RemoveAllChildrenExceptTcPr(TableCell cell)
+        {
+            var tcPr = cell.Elements<TableCellProperties>().FirstOrDefault();
+            var childrenToRemove = cell.Elements().Where(e => e != tcPr).ToList();
+            foreach (var child in childrenToRemove)
+            {
+                child.Remove();
+            }
+        }
 
         /// <summary>
         /// 获取Obj对象指定的值
