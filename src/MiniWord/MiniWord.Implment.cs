@@ -103,14 +103,15 @@ namespace MiniSoftware
                     //var listKey = listKeys[0];
 
                     var listLevelKeys = matchs.Select(s => s.Substring(0, s.LastIndexOf('.'))).Distinct().ToArray();
-                    // TODO:
-                    // not support > 2 list in same tr
-                    if (listLevelKeys.Length > 2)
-                        throw new NotSupportedException("MiniWord doesn't support more than 2 list in same row");
 
                     var tagObj = GetObjVal(tags, listLevelKeys[0]);
 
                     if(tagObj == null) continue;
+
+                    // not support > 2 list in same tr
+                    // 如果tagObj不是list，则可以存在多个key
+                    if (tagObj is IEnumerable && listLevelKeys.Length > 2)
+                        throw new NotSupportedException("MiniWord doesn't support more than 2 list in same row");
 
                     // 横向渲染的集合
                     if (tagObj is TransverseList<object> transverseList && transverseList.Any())
@@ -181,15 +182,13 @@ namespace MiniSoftware
                         {
                             var dic = new Dictionary<string, object>(); //TODO: optimize
 
-
                             var newTr = tr.CloneNode(true);
-                            if (item is IDictionary)
+                            if (item is IDictionary dict)
                             {
-                                var es = (Dictionary<string, object>)item;
-                                foreach (var e in es)
+                                foreach (var dictKey in dict.Keys)
                                 {
-                                    var dicKey = $"{listLevelKeys[0]}.{e.Key}";
-                                    dic[dicKey] = e.Value;
+                                    var dicKey = $"{listLevelKeys[0]}.{dictKey}";
+                                    dic[dicKey] = dict[dictKey];
                                 }
                             }
                             // 支持Obj.A.B.C...
@@ -283,6 +282,7 @@ namespace MiniSoftware
             if(objSource == null) return null;
 
             var nextPropNames = propNames.Skip(1).ToArray();
+            
             if (objSource is IDictionary)
             {
                 var dict = (IDictionary)objSource;
