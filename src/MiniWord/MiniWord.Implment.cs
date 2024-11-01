@@ -72,7 +72,40 @@ namespace MiniSoftware
             ReplaceText(xmlElement, docx, tags);
         }
 
+        /// <summary>
+        /// 获取行的垂直合并信息（以第一个单元格）
+        /// </summary>
+        /// <param name="row"></param>
+        /// <returns></returns>
+        private static string GetRowVerticalMergeVal(TableRow row)
+        {
+            // 判断是否有合并的单元格，先以第一个cell判断
+            //var rowCells = tr.Elements<TableCell>().ToList();
+            var firstCell = row.Elements<TableCell>().FirstOrDefault();
+            // restart是合并单元格
+            var vm = firstCell?.Elements<TableCellProperties>().FirstOrDefault()?.VerticalMerge;
+            return vm?.Val?.InnerText ?? "";
+        }
+
         
+        private static List<OpenXmlElement> DeepCloneTrs(List<TableRow> trs)
+        {
+            var newList = new List<OpenXmlElement>();
+            foreach (var tr in trs)
+            {
+                var nt = tr.CloneNode(true);
+                newList.Add(nt);
+            }
+
+            return newList;
+        }
+
+        private static bool IsRowVerticalMerge(TableRow row, string restartOrContinue)
+        {
+            return string.Equals(GetRowVerticalMergeVal(row), restartOrContinue,
+                StringComparison.CurrentCultureIgnoreCase);
+        }
+
 
         /// <summary>
         /// 渲染Table
@@ -85,8 +118,11 @@ namespace MiniSoftware
         {
             var trs = table.Descendants<TableRow>().ToArray(); // remember toarray or system will loop OOM;
 
+            
+            var trIndex = -1;
             foreach (var tr in trs)
             {
+                trIndex += 1;
                 var innerText = tr.InnerText.Replace("{{foreach", "").Replace("endforeach}}", "")
                     .Replace("{{if(", "").Replace(")if", "").Replace("endif}}", "");
 
@@ -95,6 +131,7 @@ namespace MiniSoftware
                     .Cast<Match>().GroupBy(x => x.Value).Select(varGroup => varGroup.First().Value)).ToArray();
                 if (matchs.Length > 0)
                 {
+                    
                     //var listKeys = matchs.Select(s => s.Split('.')[0]).Distinct().ToArray();
                     //// TODO:
                     //// not support > 2 list in same tr
@@ -110,16 +147,19 @@ namespace MiniSoftware
 
                     // not support > 2 list in same tr
                     // 如果tagObj不是list，则可以存在多个key
+                    
                     if (tagObj is IEnumerable && listLevelKeys.Length > 2)
                         throw new NotSupportedException("MiniWord doesn't support more than 2 list in same row");
 
-                    // 横向渲染的集合
-                    if (tagObj is TransverseList<object> transverseList && transverseList.Any())
+
+                    #region 横向渲染的集合
+
+                    if (tagObj is ITransverseList transverseList && transverseList.Count>0)
                     {
                         // 获取obj的所有key值
-                        var keyList = new Dictionary<string,PropertyInfo>();
+                        var keyList = new Dictionary<string, PropertyInfo>();
                         var item = transverseList[0];
-                       
+
                         // 只支持List<obj>，不支持dictionary。 支持Obj.A.B.C...
                         var props = item.GetType().GetProperties();
                         foreach (var p in props)
@@ -142,7 +182,7 @@ namespace MiniSoftware
                                 {
                                     cellStartIndex = i;
                                     thisKey = kv.Key;
-                                    cellKeyEles.AddRange(cell.ChildElements.Where(e=>!(e is TableCellProperties)).Select(e=>e.CloneNode(true)));
+                                    cellKeyEles.AddRange(cell.ChildElements.Where(e => !(e is TableCellProperties)).Select(e => e.CloneNode(true)));
                                     break;
                                 }
                             }
@@ -164,75 +204,147 @@ namespace MiniSoftware
 
                             var newEles = new List<OpenXmlElement>();
                             newEles.AddRange(cellKeyEles.Select(e => e.CloneNode(true)));
-                            newEles.ForEach(e=> e.InnerXml = e.InnerXml.Replace(thisKey, propValStr));
+                            newEles.ForEach(e => e.InnerXml = e.InnerXml.Replace(thisKey, propValStr));
 
                             RemoveAllChildrenExceptTcPr(cell);
                             cell.Append(newEles);
 
                         }
-                        
-                    }
-                    // 纵向（普通）渲染的集合
-                    else if (tagObj is IEnumerable)
-                    {
-                        var attributeKey = matchs[0].Split('.')[0];
-                        var list = tagObj as IEnumerable;
 
-                        foreach (var item in list)
+                    }
+
+                    #endregion
+
+                    #region 纵向（普通）渲染的集合
+
+
+                    else
+                    {
+                        // 是否判断过Row纵向有没有合并单元格
+                        var isJudgeRowMerge = false;
+                        // 合并的行数
+                        var rowSpan = 1;
+                        // 是否是一条数据（如果合并行的话，有多行）的首行
+                        var isMergeRowsFirst = false;
+
+                        // 需要复制的行
+                        var addOriginalRows = new List<TableRow>() { tr };
+
+                        
+                        #region RowSpan>1 行有单元格合并
+
+                        // 判断合并
+                        if (!isJudgeRowMerge)
+                        {
+                            // Restart说明需要合并，然后根据Continue的个数来判断RowSpan的值。RowSpan=Continue+1
+                            if (IsRowVerticalMerge(tr,nameof(VerticalMergeRevisionValues.Restart)))
+                            {
+                                for (int i = trIndex + 1; i < trs.Length; i++)
+                                {
+                                    if (IsRowVerticalMerge(trs[i], nameof(VerticalMergeRevisionValues.Continue)))
+                                    {
+                                        rowSpan += 1;
+                                        addOriginalRows.Add(trs[i]);
+                                    }
+                                    else
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        isJudgeRowMerge = true;
+                        
+                        #endregion
+
+
+                        if (tagObj is IEnumerable)
+                        {
+                            var attributeKey = matchs[0].Split('.')[0];
+                            var list = tagObj as IEnumerable;
+
+                            foreach (var item in list)
+                            {
+                                var dic = new Dictionary<string, object>(); //TODO: optimize
+
+                                if (item is IDictionary dict)
+                                {
+                                    foreach (var dictKey in dict.Keys)
+                                    {
+                                        var dicKey = $"{listLevelKeys[0]}.{dictKey}";
+                                        dic[dicKey] = dict[dictKey];
+                                    }
+                                }
+                                // 支持Obj.A.B.C...
+                                else
+                                {
+                                    var props = item.GetType().GetProperties();
+                                    foreach (var p in props)
+                                    {
+                                        var dicKey = $"{listLevelKeys[0]}.{p.Name}";
+                                        dic[dicKey] = p.GetValue(item);
+                                    }
+                                }
+
+                                if (!IsRowVerticalMerge(tr, nameof(VerticalMergeRevisionValues.Continue)))
+                                {
+                                    var newTrs = DeepCloneTrs(addOriginalRows);
+                                    for (var i = 0; i < newTrs.Count; i++)
+                                    {
+                                        var newTr = newTrs[i];
+                                        ReplaceIfStatements(newTr, tags: dic);
+
+                                        ReplaceText(newTr, docx, tags: dic);
+
+                                        if (i != newTrs.Count - 1)
+                                            continue;
+                                        //Fix #47 The table should be inserted at the template tag position instead of the last row
+                                        if (table.Contains(tr))
+                                        {
+                                            foreach (var addTr in newTrs)
+                                            {
+                                                table.InsertBefore(addTr, tr);
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // If it is a nested table, temporarily append it to the end according to the original plan.
+                                            foreach (var addTr in newTrs)
+                                            {
+                                                table.Append(addTr);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                
+                            }
+
+                            foreach (var originalRow in addOriginalRows)
+                            {
+                                if(originalRow.Parent != null )
+                                    originalRow.Remove();
+                            }
+                        }
+                        else
                         {
                             var dic = new Dictionary<string, object>(); //TODO: optimize
 
-                            var newTr = tr.CloneNode(true);
-                            if (item is IDictionary dict)
+                            var props = tagObj.GetType().GetProperties();
+                            foreach (var p in props)
                             {
-                                foreach (var dictKey in dict.Keys)
-                                {
-                                    var dicKey = $"{listLevelKeys[0]}.{dictKey}";
-                                    dic[dicKey] = dict[dictKey];
-                                }
-                            }
-                            // 支持Obj.A.B.C...
-                            else
-                            {
-                                var props = item.GetType().GetProperties();
-                                foreach (var p in props)
-                                {
-                                    var dicKey = $"{listLevelKeys[0]}.{p.Name}";
-                                    dic[dicKey] = p.GetValue(item);
-                                }
+                                var dicKey = $"{listLevelKeys[0]}.{p.Name}";
+                                dic[dicKey] = p.GetValue(tagObj);
                             }
 
-                            ReplaceIfStatements(newTr, tags: dic);
+                            ReplaceIfStatements(tr, tags: tagObj.ToDictionary());
 
-                            ReplaceText(newTr, docx, tags: dic);
-                            //Fix #47 The table should be inserted at the template tag position instead of the last row
-                            if (table.Contains(tr))
-                            {
-                                table.InsertBefore(newTr, tr);
-                            }
-                            else
-                            {
-                                // If it is a nested table, temporarily append it to the end according to the original plan.
-                                table.Append(newTr);
-                            }
+                            ReplaceText(tr, docx, tags: dic);
                         }
-                        tr.Remove();
                     }
-                    else
-                    {
-                        var dic = new Dictionary<string, object>(); //TODO: optimize
 
-                        var props = tagObj.GetType().GetProperties();
-                        foreach (var p in props)
-                        {
-                            var dicKey = $"{listLevelKeys[0]}.{p.Name}";
-                            dic[dicKey] = p.GetValue(tagObj);
-                        }
+                    #endregion
 
-                        ReplaceIfStatements(tr, tags: tagObj.ToDictionary());
-
-                        ReplaceText(tr, docx, tags: dic);
-                    }
                 }
                 else
                 {
@@ -305,6 +417,12 @@ namespace MiniSoftware
             if (propNames.Length == 1)
                 return prop1Val;
             return GetObjVal(prop1Val, nextPropNames);
+        }
+
+        private static object GetObjValInList(List<object> objSource, string[] propNames,int itemIndex)
+        {
+            var obj = objSource[itemIndex];
+            return GetObjVal(obj, propNames);
         }
 
         private static void AvoidSplitTagText(OpenXmlElement xmlElement)

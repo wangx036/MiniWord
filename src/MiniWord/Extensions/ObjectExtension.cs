@@ -27,7 +27,7 @@ namespace MiniSoftware.Extensions
 				{
 					object val1 = prop.GetValue(value);
 
-                    if (val1 is TransverseList<object> transverseList)
+                    if (val1 is ITransverseList transverseList)
                     {
                         reuslt.Add(prop.Name,val1);
                     }
@@ -48,12 +48,22 @@ namespace MiniSoftware.Extensions
 								isValueOrStringType = true;
 								reuslt.Add(prop.Name, val1);
 								break;
-							}
-							if (val1item is Dictionary<string, object> dicStr)
-							{
-								sx.Add(dicStr);
-								continue;
-							}
+                            }
+                            if (val1item is IDictionary dictionary)
+                            {
+                                Dictionary<string, object> newDict = new Dictionary<string, object>();
+                                foreach (DictionaryEntry entry in dictionary)
+                                {
+                                    newDict.Add((string)entry.Key, (object)entry.Value);
+                                }
+                                sx.Add( newDict);
+                                continue;
+                            }
+                            //if (val1item is Dictionary<string, object> dicStr)
+							//{
+							//	sx.Add(dicStr);
+							//	continue;
+							//}
 							else if (val1item is ExpandoObject)
 							{
 								sx.Add(new Dictionary<string, object>(value as ExpandoObject));

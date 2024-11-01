@@ -1,12 +1,15 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace MiniSoftware
 {
+
+    public interface ITransverseList : IList {}
     /// <summary>
     /// 横向渲染的 List
     /// </summary>
-    public class TransverseList<T> : List<T>
+    public class TransverseList<T> : List<T>, ITransverseList
     {
         public TransverseList(){}
         public TransverseList(List<T> list)
